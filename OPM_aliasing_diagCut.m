@@ -1,34 +1,52 @@
 clear all;
 %%
 mip = @(x,dim) squeeze(max(rescale(x),[],dim))';
-% mip = @(x,dim) squeeze(x(256,:,:))';
 pwr = @(x,dim) squeeze(log10(max(abs(fftshift(x)),[],dim)))';
 p_rl = @(x,dim) squeeze(log10(max(real(fftshift(x)),[],dim)))';
 p_im = @(x,dim) squeeze(log10(max(imag(fftshift(x)),[],dim)))';
 apply = @(mask,x) fftshift(mask) .* x;
 
 %%
-% big beads
-% dataPath = '/archive/bioinformatics/Danuser_lab/Fiolka/MicroscopeDevelopment/omniOPM/Calibration60X/mito/OMP/241211';
-% dataPath = '/archive/bioinformatics/Danuser_lab/Fiolka/MicroscopeDevelopment/Aliasing_OPM/U2OS/241211';
 dataPath = '/archive/bioinformatics/Danuser_lab/Fiolka/Manuscripts/OPM-ALIAS/DataToShare';
 
-imPath = fullfile(dataPath, 'highOPM', 'Cell1', '1_CH00_000000.tif');
+% experimentName = 'highOPM';
+experimentName = 'mesoOPM';
+
+imPath = fullfile(dataPath, experimentName, 'Cell1', '1_CH00_000000.tif');
 
 %% deskewing
 
-% omniOPM
-osFactor = 2;
-dsFactor = 2;
-xyPixelSize = 0.147;
-dz = 0.207;
-skewAngle = 45.0;
+switch experimentName
+    case 'highOPM'
+        osFactor = 1;
+        dsFactor = 3;
+        xyPixelSize = 0.147;
+        dz = 0.207;
+        skewAngle = 45.0;
+        fillMethod = 'crop';
+        angleBump = 3.0;
+        outSize = [16,256,64];
 
-% mesoOPM
-% dsFactor = 4;
-% xyPixelSize = 1.15;
-% dz = 1.60;
-% skewAngle = 45.0;
+    case 'mesoOPM'
+        osFactor = 1;
+        dsFactor = 4;
+        xyPixelSize = 1.15;
+        dz = 1.60;
+        skewAngle = 45.0;
+        fillMethod = 'median';
+        angleBump = 6.0;
+        outSize = [128,256,64];
+
+    otherwise
+        osFactor = 1;
+        dsFactor = 1;
+        xyPixelSize = 0.147;
+        dz = 0.210;
+        skewAngle = 45.0;
+        fillMethod = 'median';
+        angleBump = 0.0;   
+        outSize = [256,256,64];
+end
 
 dz = dz * osFactor;
 
@@ -61,18 +79,19 @@ im_full = deskewFrame3D( ...
     'reverse', true ...
     );
 
-% median fill:
-% im_dsk(im_dsk(:) == 0) = fillVal;
-
-% cropping
-x1 = find(squeeze(im_dsk(1,:,1)) > 0);
-x1 = x1(1);
-
-x2 = find(squeeze(im_dsk(1,:,end)) > 0);
-x2 = x2(end);
-
-im_dsk = im_dsk(:, (x1+1):(x2-1), :);
-im_full = im_full(:, (x1+1):(x2-1), :);
+% try to reduce edge effects
+if strcmp(fillMethod, 'crop')
+    x1 = find(squeeze(im_dsk(1,:,1)) > 0);
+    x1 = x1(1);
+    
+    x2 = find(squeeze(im_dsk(1,:,end)) > 0);
+    x2 = x2(end);
+    
+    im_dsk = im_dsk(:, (x1+1):(x2-1), :);
+    im_full = im_full(:, (x1+1):(x2-1), :);
+elseif strcmp(fillMethod, 'median')
+    im_dsk(im_dsk(:) == 0) = fillVal; 
+end
 
 %% "upsampling" downsampled stack: G
 
@@ -140,9 +159,9 @@ z = z - mean(z(:));
 
 blurSize = 0.0;
 
-alpha = skewAngle + 3.0;
+alpha = skewAngle + angleBump;
 th = (cosd(alpha)*sz + sind(alpha)*sx)/2 - blurSize/2;
-mask = (z > -cosd(alpha).*(x + th/dsFactor));
+mask = (z > -cosd(alpha).*(x + th/dsFactor/osFactor));
 mask = mask & mask & flip(flip(mask, 3), 2);
 
 hold on;
@@ -201,13 +220,12 @@ imagesc(mip(im_interp, 1));
 axis image;
 title('Interpolated (deskewed)');
 
-%%
-outSize = [16,256,64];
+%% rotations
 
 im_full_rot = rotateFrame3D( ...
     im_full, ...
     skewAngle, ...
-    1.0, ...
+    osFactor, ...
     'reverse', true, ...
     'Crop', true, ...
     'outSize', outSize ...
@@ -223,14 +241,10 @@ set(gca, 'XTick', []);
 ylabel('fully sampled');
 axis image; 
 
-% 
-% writetiff(im_full_rot, fullfile(dataPath, "im_full_rot.tif"));
-% 
-
 im_recon_rot = rotateFrame3D( ...
     g_recon, ...
     skewAngle, ...
-    1.0, ...
+    osFactor, ...
     'reverse', true, ...
     'Crop', true, ...
     'outSize', outSize ...
@@ -243,14 +257,10 @@ set(gca, 'XTick', []);
 ylabel('reconstructed');
 axis image;
 
-% 
-% writetiff(im_recon_rot, fullfile(dataPath, "im_recon_rot.tif"));
-% 
-
 im_interp_rot = rotateFrame3D( ...
     im_interp, ...
     skewAngle, ...
-    1.0, ...
+    osFactor, ...
     'reverse', true, ...
     'Crop', true, ...
     'outSize', outSize ...
@@ -261,7 +271,10 @@ subplot(3,1,3);
 imagesc(mip(im_interp_rot, 1));
 ylabel('interpolated');
 axis image;
-% 
+
+%% saving:
+% writetiff(im_full_rot, fullfile(dataPath, "im_full_rot.tif"));
+% writetiff(im_recon_rot, fullfile(dataPath, "im_recon_rot.tif"));
 % writetiff(im_interp_rot, fullfile(dataPath, "im_interp_rot.tif"));
 
 %% functions
