@@ -14,7 +14,7 @@ experimentName = 'mesoOPM';
 
 imPath = fullfile(dataPath, experimentName, 'Cell1', '1_CH00_000000.tif');
 
-%% deskewing
+%% parameter setup
 
 switch experimentName
     case 'highOPM'
