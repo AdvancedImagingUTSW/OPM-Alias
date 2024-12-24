@@ -18,9 +18,10 @@ imPath = fullfile(dataPath, 'highOPM', 'Cell1', '1_CH00_000000.tif');
 %% deskewing
 
 % omniOPM
+osFactor = 2;
 dsFactor = 2;
 xyPixelSize = 0.147;
-dz = 0.210;
+dz = 0.207;
 skewAngle = 45.0;
 
 % mesoOPM
@@ -29,12 +30,17 @@ skewAngle = 45.0;
 % dz = 1.60;
 % skewAngle = 45.0;
 
+dz = dz * osFactor;
+
 %% load, deskew and downsample image
 
 im = permute(readtiff(imPath), [2,1,3]);
-im_full = im;
 
-im_dsp = im(:, :, 1:dsFactor:end);
+% oversample -> critical
+im_full = im(:, :, 1:osFactor:end);
+
+% critical -> downsample
+im_dsp = im_full(:, :, 1:dsFactor:end);
 
 fillVal = median(im_dsp(:));
 
@@ -67,18 +73,6 @@ x2 = x2(end);
 
 im_dsk = im_dsk(:, (x1+1):(x2-1), :);
 im_full = im_full(:, (x1+1):(x2-1), :);
-
-% figure(1); clf;
-% set(gcf, 'color', [1,1,1]);
-% imagesc(mip(im_full, 1));
-% axis image;
-% title('Fully sampled (deskewed)');
-% 
-% figure(2);
-% set(gcf, 'color', [1,1,1]);
-% imagesc(mip(im_dsk, 1));
-% % imagesc(squeeze(im_dsk(512,:,:)));
-% axis image;
 
 %% "upsampling" downsampled stack: G
 
