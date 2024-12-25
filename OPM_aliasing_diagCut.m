@@ -10,23 +10,40 @@ apply = @(mask,x) fftshift(mask) .* x;
 dataPath = '/archive/bioinformatics/Danuser_lab/Fiolka/Manuscripts/OPM-ALIAS/DataToShare';
 
 % experimentName = 'highOPM';
-experimentName = 'mesoOPM';
+experimentName = 'highOPM2';
+% experimentName = 'mesoOPM';
 
 imPath = fullfile(dataPath, experimentName, 'Cell1', '1_CH00_000000.tif');
 
 %% parameter setup
 
+% defaults
+baseThick = 0;
+zCrop = 0;
+
 switch experimentName
     case 'highOPM'
-        osFactor = 1;
-        dsFactor = 3;
+        osFactor = 2;
+        dsFactor = 2;
         xyPixelSize = 0.147;
         dz = 0.207;
         skewAngle = 45.0;
         fillMethod = 'crop';
         angleBump = 3.0;
         outSize = [16,256,64];
-
+    
+    case 'highOPM2'
+        osFactor = 2;
+        dsFactor = 2;
+        xyPixelSize = 0.147;
+        dz = 0.207;
+        skewAngle = 45.0;
+        fillMethod = 'crop';
+        angleBump = 3.0;
+        outSize = [16,256,96];
+        baseThick = 0.5;
+        zCrop = 56;
+    
     case 'mesoOPM'
         osFactor = 1;
         dsFactor = 4;
@@ -160,7 +177,7 @@ z = z - mean(z(:));
 blurSize = 0.0;
 
 alpha = skewAngle + angleBump;
-th = (cosd(alpha)*sz + sind(alpha)*sx)/2 - blurSize/2;
+th = (cosd(alpha)*sz + sind(alpha)*sx)/(2 - baseThick) - blurSize/2;
 mask = (z > -cosd(alpha).*(x + th/dsFactor/osFactor));
 mask = mask & mask & flip(flip(mask, 3), 2);
 
@@ -232,6 +249,10 @@ im_full_rot = rotateFrame3D( ...
     );
 im_full_rot = norm_u16(im_full_rot);
 
+if zCrop
+    im_full_rot = im_full_rot(:, :, 1:zCrop);
+end
+
 % rotated results
 figure(5); clf;
 set(gcf, 'color', [1,1,1]);
@@ -251,6 +272,10 @@ im_recon_rot = rotateFrame3D( ...
     );
 im_recon_rot = norm_u16(im_recon_rot);
 
+if zCrop
+    im_recon_rot = im_recon_rot(:, :, 1:zCrop);
+end
+
 subplot(3,1,2);
 imagesc(mip(im_recon_rot, 1));
 set(gca, 'XTick', []);
@@ -266,6 +291,10 @@ im_interp_rot = rotateFrame3D( ...
     'outSize', outSize ...
     );
 im_interp_rot = norm_u16(im_interp_rot);
+
+if zCrop
+    im_interp_rot = im_interp_rot(:, :, 1:zCrop);
+end
 
 subplot(3,1,3);
 imagesc(mip(im_interp_rot, 1));
