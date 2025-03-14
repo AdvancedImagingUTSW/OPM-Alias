@@ -1,2 +1,11 @@
 
 *.asv
+bp_filter.m
+OPM_aliasing_timingCompare_2.m
+OPM_aliasing_timingCompare_dsrCombined.m
+OPM_aliasing_timingCompare_dsrCombined_2.m
+OPM_aliasing_timingCompare_dsrSeparate.m
+OPM_aliasing_timing.m
+timingBoxes.m
+view4DImage.m
+opm_aliasing_sim_comb.ipynb
