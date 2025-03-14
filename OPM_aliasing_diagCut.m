@@ -1,19 +1,34 @@
-clear all;
-%%
+% clear all;
+D = gpuDevice;
+
+%% helper functions
 mip = @(x,dim) squeeze(max(rescale(x),[],dim))';
 pwr = @(x,dim) squeeze(log10(max(abs(fftshift(x)),[],dim)))';
-p_rl = @(x,dim) squeeze(log10(max(real(fftshift(x)),[],dim)))';
-p_im = @(x,dim) squeeze(log10(max(imag(fftshift(x)),[],dim)))';
-apply = @(mask,x) fftshift(mask) .* x;
 
-%%
-dataPath = '/archive/bioinformatics/Danuser_lab/Fiolka/Manuscripts/OPM-ALIAS/DataToShare';
+%% load data
 
-% experimentName = 'highOPM';
-experimentName = 'highOPM2';
-% experimentName = 'mesoOPM';
-
-imPath = fullfile(dataPath, experimentName, 'Cell1', '1_CH00_000000.tif');
+if ~exist('imPath', 'var')
+    
+    dataPath = '/archive/bioinformatics/Danuser_lab/Fiolka/Manuscripts/OPM-ALIAS/DataToShare/mesoOPM';
+    
+    experimentName = 'mesoOPM';
+    
+    % CASE 1: You have critically sampled ground truth, simulate the
+    % undersampling and reconstruct ---------------------------------------
+        
+        imPath = fullfile(dataPath, 'Cell1', '1_CH00_000000.tif');
+        fullySampled = true;
+    
+    % ---------------------------------------------------------------------
+    
+    % CASE 2: You've acquired real downsampled data (no ground truth)
+    % ---------------------------------------------------------------------
+    
+        % imPath = fullfile(dataPath, '', 'Cell1_dsp4.tif'); 
+        % fullySampled = false;
+    
+    % ---------------------------------------------------------------------
+end
 
 %% parameter setup
 
@@ -23,12 +38,12 @@ zCrop = 0;
 
 switch experimentName
     case 'highOPM'
-        osFactor = 2;
-        dsFactor = 2;
+        osFactor = 1;
+        dsFactor = 4;
         xyPixelSize = 0.147;
         dz = 0.207;
         skewAngle = 45.0;
-        fillMethod = 'crop';
+        fillMethod = 'median';
         angleBump = 3.0;
         outSize = [16,256,64];
     
@@ -51,7 +66,7 @@ switch experimentName
         dz = 1.60;
         skewAngle = 45.0;
         fillMethod = 'median';
-        angleBump = 6.0;
+        angleBump = 1.0;
         outSize = [128,256,64];
 
     otherwise
@@ -67,23 +82,46 @@ end
 
 dz = dz * osFactor;
 
-%% load, deskew and downsample image
+%% data preparation
 
 im = permute(readtiff(imPath), [2,1,3]);
+im = gpuArray(single(im));
 
-% oversample -> critical
-im_full = im(:, :, 1:osFactor:end);
+im_dsp = im;
 
-% critical -> downsample
-im_dsp = im_full(:, :, 1:dsFactor:end);
+im_full = zeros(size(im_dsp) .* [1 1 dsFactor], 'like', im); % dummy image
 
+% if the input is critically sampled (or better) then we treat it as
+% ground truth and simulate the undersampling
+if fullySampled
+    % oversample -> critical
+    im_full = im(:, :, 1:osFactor:end);
+    
+    % critical -> downsample
+    im_dsp = im_full(:, :, 1:dsFactor:end);
+end
+
+% comb upsampling operation
+im_comb = zeros(size(im_full), 'like', im);
+im_comb(:, :, 1:dsFactor:end) = im_dsp;
+
+%%
 fillVal = median(im_dsp(:));
 
-% deskew
-im_dsk = deskewFrame3D( ...
+% deskewing
+
+im_dsp = deskewFrame3D( ...
     im_dsp, ...
     skewAngle, ...
     dz * dsFactor, ...
+    xyPixelSize, ...
+    'reverse', true ...
+    );
+
+im_comb = deskewFrame3D( ...
+    im_comb, ...
+    skewAngle, ...
+    dz, ...
     xyPixelSize, ...
     'reverse', true ...
     );
@@ -98,34 +136,35 @@ im_full = deskewFrame3D( ...
 
 % try to reduce edge effects
 if strcmp(fillMethod, 'crop')
-    x1 = find(squeeze(im_dsk(1,:,1)) > 0);
+    x1 = find(squeeze(im_dsp(1,:,1)) > 0);
     x1 = x1(1);
     
-    x2 = find(squeeze(im_dsk(1,:,end)) > 0);
+    x2 = find(squeeze(im_dsp(1,:,end)) > 0);
     x2 = x2(end);
     
-    im_dsk = im_dsk(:, (x1+1):(x2-1), :);
+    im_dsp = im_dsp(:, (x1+1):(x2-1), :);
     im_full = im_full(:, (x1+1):(x2-1), :);
 elseif strcmp(fillMethod, 'median')
-    im_dsk(im_dsk(:) == 0) = fillVal; 
+    im_dsp(im_dsp(:) == 0) = fillVal; 
 end
 
-%% "upsampling" downsampled stack: G
+%% Fourier space masking and plotting
 
-nz_ds = size(im_dsk,3);
-G = fftn(im_dsk);
-G_rep = repmat(G, [1, 1, dsFactor]);
+nz_ds = size(im_dsp,3);
+
+G_dsp  = fftn(im_dsp);
+G_comb = fftn(im_comb);
+G_full = fftn(im_full);
 
 % handle even downsample case;
+z_ds = 0;
 if ~mod(dsFactor, 2)
-    z_ds = uint16(size(G_rep,3)/dsFactor) + mod(size(G_rep,3),2);
-    G_rep = cat(3, G_rep(:, :, (z_ds+1):end), G_rep(:, :, 1:z_ds));
+    z_ds = uint16(size(G_comb,3)/dsFactor) + mod(size(G_comb,3),2);
 end
 
 % deskew and reciprocal space figures...
 figure(1); clf;
 set(gcf, 'color', [1,1,1]);
-
 t = tiledlayout(2, 3, 'TileSpacing', 'none', 'Padding', 'compact');
 
 nexttile(t);
@@ -133,41 +172,45 @@ imagesc(mip(im_full, 1));
 colormap(gca, 'parula');
 axis image;
 
+if fullySampled
+    title('Critical Nyquist sampling', 'FontSize', 16);
+end
+
+%%
 nexttile(t);
-imagesc(mip(im_dsk, 1));
+imagesc(mip(im_dsp, 1));
 colormap(gca, 'parula');
 axis image;
 set(gca, 'YTick', []);
-
-im_rep = ifftn(G_rep);
-im_rep = real(im_rep);
+title(sprintf('%dX downsampled', dsFactor), 'FontSize', 16);
 
 nexttile(t);
-imagesc(mip(im_rep, 1));
+imagesc(mip(im_comb, 1));
 colormap(gca, 'parula');
 axis image;
 set(gca, 'YAxisLocation', 'right');
+title('Comb upsampling', 'FontSize', 16);
 
-G_full = fftn(im_full);
-
+%%
 nexttile(t);
 imagesc(pwr(G_full, 1));
 colormap(gca, 'hot');
 axis image;
 
 nexttile(t);
-imagesc(pwr(G, 1));
+imagesc(pwr(G_dsp, 1));
 colormap(gca, 'hot');
 axis image;
 set(gca, 'YTick', []);
 
 nexttile(t);
-imagesc(pwr(G_rep, 1));
+imagesc(pwr(G_comb, 1));
 colormap(gca, 'hot');
 axis image;
 
+%%
 set(gca, 'YAxisLocation', 'right');
-[sy, sx, sz] = size(G_rep);
+[sy, sx, sz] = size(G_comb);
 
 [x, y, z] = meshgrid(1:sx, 1:sy, 1:sz);
 x = x - mean(x(:));
@@ -176,10 +219,8 @@ z = z - mean(z(:));
 
 blurSize = 0.0;
 
-alpha = skewAngle + angleBump;
-th = (cosd(alpha)*sz + sind(alpha)*sx)/(2 - baseThick) - blurSize/2;
-mask = (z > -cosd(alpha).*(x + th/dsFactor/osFactor));
-mask = mask & mask & flip(flip(mask, 3), 2);
+mask = (z > -x .* (sz/sx) ./ tand(skewAngle + angleBump) - sz/dsFactor/2) ...
+     & (z < -x .* (sz/sx) ./ tand(skewAngle + angleBump) + sz/dsFactor/2);
 
 hold on;
 
@@ -201,7 +242,7 @@ if blurSize > 0
 end
 
 %%
-G_mask = fftshift(mask) .* G_rep;
+G_mask = fftshift(mask) .* G_comb;
 
 % masked G
 figure(2); clf; 
@@ -223,14 +264,14 @@ axis image;
 title('Reconstructed (deskewed)');
 
 %%
-rz = size(im_full,3) / size(im_dsk,3);
+rz = size(im_full,3) / size(im_dsp,3);
 
 S = [1 0 0 0
     0 1 0 0
     0 0 rz 0
     0 0 0 1];
 
-im_interp = imwarp(im_dsk, affine3d(S), "cubic");
+im_interp = imwarp(im_dsp, affine3d(S));
 
 figure(4); clf;
 imagesc(mip(im_interp, 1));
@@ -300,6 +341,10 @@ subplot(3,1,3);
 imagesc(mip(im_interp_rot, 1));
 ylabel('interpolated');
 axis image;
+
+%% clear GPU cache
+
+reset(D);
 
 %% saving:
 % writetiff(im_full_rot, fullfile(dataPath, "im_full_rot.tif"));

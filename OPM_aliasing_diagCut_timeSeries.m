@@ -2,9 +2,11 @@ clear all;
 %%
 mip = @(x,dim) squeeze(max(rescale(x),[],dim))';
 pwr = @(x,dim) squeeze(log10(max(abs(fftshift(x)),[],dim)))';
-p_rl = @(x,dim) squeeze(log10(max(real(fftshift(x)),[],dim)))';
-p_im = @(x,dim) squeeze(log10(max(imag(fftshift(x)),[],dim)))';
-apply = @(mask,x) fftshift(mask) .* x;
+
+%%
+saveData = false;
+
+D = gpuDevice;
 
 %%
 % dataPath = '/archive/bioinformatics/Danuser_lab/Fiolka/MicroscopeDevelopment/omniOPM/Calibration60X/mito/OMP/241211';
@@ -41,7 +43,7 @@ end
 
 %% loop through timepoints
 
-maxNumTimePoints = 1;
+maxNumTimePoints = 0;
 
 if maxNumTimePoints <= 0
     maxNumTimePoints = length(tiffList);
@@ -65,6 +67,9 @@ for t = 1:maxNumTimePoints
     
     im = permute(readtiff(imPath), [2,1,3]);
     
+    % push to GPU
+    im = gpuArray(single(im));
+
     % deskew
     im_dsk = deskewFrame3D( ...
         im, ...
@@ -73,14 +78,6 @@ for t = 1:maxNumTimePoints
         xyPixelSize, ...
         'reverse', true ...
         );
-    
-    % x1 = find(squeeze(im_dsk(1,:,end)) > 0);
-    % x1 = x1(1);
-    % 
-    % x2 = find(squeeze(im_dsk(1,:,1)) > 0);
-    % x2 = x2(end);
-
-    % im_dsk = im_dsk(:, (x1+1):(x2-1), :);
     
     outSize = [size(im_dsk, [1,2]), zCrop];
     
@@ -95,9 +92,11 @@ for t = 1:maxNumTimePoints
         'outSize', outSize ...
         );
     im_dsk_rot = norm_u16(im_dsk_rot);
-
-    writetiff(im_dsk_rot, fullfile(saveDir, timePoint.name));
-
+    
+    if saveData
+        writetiff(im_dsk_rot, fullfile(saveDir, timePoint.name));
+    end
+    
     if display
         figure(t); clf;
         subplot(3,3,[2,5,8]);
@@ -120,14 +119,12 @@ for t = 1:maxNumTimePoints
 
     %% "upsampling" downsampled stack: G
     
-    G = fftn(im_dsk);
-    G = repmat(G, [1, 1, dsFactor]);
-    
-    % handle even downsample case;
-    if ~mod(dsFactor, 2)
-        z_ds = uint16(size(G,3)/dsFactor) + mod(size(G,3),2);
-        G = cat(3, G(:, :, (z_ds+1):end), G(:, :, 1:z_ds));
-    end
+    % comb upsampling trick
+    im_comb = zeros(size(im_dsk) .* [1 1 dsFactor], 'like', im);
+    im_comb(:, :, 1:dsFactor:end) = im_dsk;
+
+    % fft
+    G = fftn(im_comb);
     
     if display
         subplot(3,3,1);
@@ -137,25 +134,32 @@ for t = 1:maxNumTimePoints
     end
 
     %% create mask and apply to G
-    [sy, sx, sz] = size(G);
+    % fast mask
+    mask = single(im_comb);
+    mask(:) = 0;
+
+    [~, ~, nz] = size(mask);
+    hz = uint16(nz/2);
+    wz = uint16((xyPixelSize/dz)*nz/dsFactor/2);
     
-    [x, y, z] = meshgrid(1:sx, 1:sy, 1:sz);
-    x = x - mean(x(:));
-    y = y - mean(y(:));
-    z = z - mean(z(:));
-    
+    mask(:, :, (hz-wz):(hz+wz)) = 1;
+    mask = rotateFrame3D( ...
+            mask, ...
+            skewAngle * dz/xyPixelSize/dsFactor, ...
+            dz/xyPixelSize, ...
+            'Crop', true, ...
+            'outSize', size(mask) ...
+        );
+    mask(mask < 1) = 0;
+    mask = fftshift(mask);    
+
+    % Gaussian blur, if you're in the mood
     blurSize = 0.0;
-    
-    alpha = skewAngle * dz/xyPixelSize;
-    th = (cosd(alpha)*sz + sind(alpha)*sx)/2 - blurSize/2;
-    mask = (z > -cosd(alpha).*(x + th/dsFactor));
-    mask = mask & mask & flip(flip(mask, 3), 2);
-    
     if blurSize > 0
         mask = imgaussfilt3(double(mask), blurSize/dsFactor);
     end
     
-    G_mask = fftshift(mask) .* G;
+    G_mask = mask .* G;
      
     if display
         subplot(3,3,4);
@@ -188,8 +192,12 @@ for t = 1:maxNumTimePoints
     end
 
     %% save
-    writetiff(im_recon_rot, fullfile(saveDir, ['recon_', timePoint.name]));
+    if saveData
+        writetiff(im_recon_rot, fullfile(saveDir, ['recon_', timePoint.name]));
+    end
 end
+
+reset(D);
 
 %% functions
 
