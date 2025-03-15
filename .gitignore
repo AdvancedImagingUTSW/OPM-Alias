@@ -8,6 +8,7 @@ OPM_aliasing_timingCompare_dsrSeparate.m
 OPM_aliasing_timing.m
 timingBoxes.m
 view4DImage.m
+opm_aliasing_sim.ipynb
 opm_aliasing_sim_comb.ipynb
 OPM_aliasing_diagCut_2.m
 OPM_aliasing_InterleaveComb.m
