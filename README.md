@@ -28,7 +28,7 @@ MATLAB script comparing computational performance for OPM data processing via 4 
 - PetaKit5D fast deskew-rotation (DSR) with interpolation
 - PetaKit5D interpolation before rotation
 - Aliasing reconstruction with top-hat filter before rotation
-- Aliasing reconstruction with top-hat filter after rortation (uses fast DSR)
+- Aliasing reconstruction with top-hat filter after rotation (uses fast DSR)
 
 Used to generate Supplementary Figures S9-10.
 <br><br>
